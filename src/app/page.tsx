@@ -446,6 +446,7 @@ export default function Home() {
           </div>
         </section>
 
+
         <section
           className={`${styles.section} ${styles.aboutSection}`}
           id="about"
