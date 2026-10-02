@@ -6,9 +6,9 @@ import Script from "next/script";
 import isEmail from "validator/lib/isEmail";
 import styles from "./page.module.css";
 
-const recaptchaSiteKey =
-  process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY ?? "recaptch123";
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "https://api.com/contact";
+// No placeholder fallbacks: missing config should fail loudly, not silently.
+const recaptchaSiteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
+const apiUrl = process.env.NEXT_PUBLIC_API_URL;
 
 declare global {
   interface Window {
@@ -146,19 +146,34 @@ const capabilityGroups = [
 ];
 
 export default function Home() {
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window === "undefined") return true;
-    const savedTheme = window.localStorage.getItem("portfolio-theme");
-    return savedTheme ? savedTheme === "dark" : true;
-  });
+  // Start with the server-rendered default; read the saved theme after mount
+  // so server and client HTML match (avoids a hydration mismatch).
+  const [darkMode, setDarkMode] = useState(true);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [formStatus, setFormStatus] = useState("");
   const [formError, setFormError] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem("portfolio-theme", darkMode ? "dark" : "light");
-  }, [darkMode]);
+    try {
+      const savedTheme = window.localStorage.getItem("portfolio-theme");
+      if (savedTheme) setDarkMode(savedTheme === "dark");
+    } catch {
+      // localStorage unavailable (private mode, etc.): keep default
+    }
+  }, []);
+
+  function toggleTheme() {
+    setDarkMode((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem("portfolio-theme", next ? "dark" : "light");
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     function updateScrollProgress() {
@@ -182,10 +197,17 @@ export default function Home() {
 
   async function handleContactSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // Capture the form now: event.currentTarget is null after any await.
+    const form = event.currentTarget;
     setFormStatus("");
     setFormError("");
 
-    const formData = new FormData(event.currentTarget);
+    if (!recaptchaSiteKey || !apiUrl) {
+      setFormError("The contact form is not configured. Please email me directly.");
+      return;
+    }
+
+    const formData = new FormData(form);
     const name = String(formData.get("name") ?? "").trim();
     const email = String(formData.get("email") ?? "").trim();
     const contact = String(formData.get("contact") ?? "").trim();
@@ -213,29 +235,30 @@ export default function Home() {
       return;
     }
 
-    const recaptchaToken = await new Promise<string>((resolve, reject) => {
-      window.grecaptcha?.ready(() => {
-        window.grecaptcha
-          ?.execute(recaptchaSiteKey, { action: "contact_form" })
-          .then(resolve)
-          .catch(reject);
-      });
-    });
-
     try {
+      const recaptchaToken = await new Promise<string>((resolve, reject) => {
+        window.grecaptcha!.ready(() => {
+          window
+            .grecaptcha!.execute(recaptchaSiteKey, { action: "contact_form" })
+            .then(resolve, reject);
+        });
+      });
+
+      // Token is sent in the JSON body so no custom CORS header is needed.
       const response = await fetch(apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Recaptcha-Token": recaptchaToken, },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
           email,
           contact: phoneNumber?.number ?? "",
           message,
+          recaptchaToken,
         }),
       });
 
       if (!response.ok) throw new Error("Request failed");
-      event.currentTarget.reset();
+      form.reset();
       setFormStatus("Thanks. Your message has been sent.");
     } catch {
       setFormError(
@@ -260,10 +283,12 @@ export default function Home() {
 
   return (
     <div className={`${styles.page} ${darkMode ? styles.darkMode : ""}`}>
-      <Script
-        src={`https://www.google.com/recaptcha/api.js?render=${recaptchaSiteKey}`}
-        strategy="afterInteractive"
-      />
+      {recaptchaSiteKey && (
+        <Script
+          src={`https://www.google.com/recaptcha/api.js?render=${recaptchaSiteKey}`}
+          strategy="afterInteractive"
+        />
+      )}
       <header className={styles.navbar}>
         <a
           className={styles.wordmark}
@@ -301,7 +326,10 @@ export default function Home() {
           >
             Contact
           </a>
-          <a href="mailto:barnwalroushan23@gmail.com" onClick={() => setMenuOpen(false)}>
+          <a
+            href="mailto:barnwalroushan23@gmail.com"
+            onClick={() => setMenuOpen(false)}
+          >
             Mail
           </a>
         </nav>
@@ -315,7 +343,7 @@ export default function Home() {
           <button
             className={styles.themeToggle}
             type="button"
-            onClick={() => setDarkMode((current) => !current)}
+            onClick={toggleTheme}
             aria-label={
               darkMode ? "Switch to light mode" : "Switch to dark mode"
             }
@@ -445,7 +473,6 @@ export default function Home() {
             ))}
           </div>
         </section>
-
 
         <section
           className={`${styles.section} ${styles.aboutSection}`}
@@ -605,10 +632,18 @@ export default function Home() {
                 >
                   LinkedIn ↗
                 </a>
-                <a href="https://github.com/roushan2312" target="_blank" rel="noreferrer">
+                <a
+                  href="https://github.com/roushan2312"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   GitHub ↗
                 </a>
-                <a href="https://leetcode.com/u/roushan__23" target="_blank" rel="noreferrer">
+                <a
+                  href="https://leetcode.com/u/roushan__23"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   LeetCode ↗
                 </a>
               </div>
@@ -632,7 +667,6 @@ export default function Home() {
           <a href="mailto:barnwalroushan23@gmail.com">
             barnwalroushan23@gmail.com
           </a>
-          {/* <span>Built for the web / 2026</span> */}
         </div>
       </footer>
     </div>
